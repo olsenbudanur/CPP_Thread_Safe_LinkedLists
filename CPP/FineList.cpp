@@ -13,7 +13,7 @@ using namespace std;
 /**
  * Generic template for a Linked List.
  */
-template<typename T> class CoarseList {
+template<typename T> class FineList {
     private: 
         /**
          * Inner nested node class.
@@ -51,12 +51,12 @@ template<typename T> class CoarseList {
         };
 
         //
-        // The head and tail of the singly linked list implementation of CoarseList.
+        // The head and tail of the singly linked list implementation of FineList.
         Node head;
         Node tail;
 
         //
-        // Lock for the coarse grained implementation.
+        // Lock for the implementation.
         std::mutex lock;
 
         //
@@ -65,9 +65,9 @@ template<typename T> class CoarseList {
 
     public: 
         /**
-         * The constructor for the CoarseList. It initiates the head and tail.
+         * The constructor for the FineList. It initiates the head and tail.
          */
-        CoarseList() : head(0), tail(std::numeric_limits<std::size_t>::max()){
+        FineList() : head(0), tail(std::numeric_limits<std::size_t>::max()){
             cout << "Constructor is called \n";
             head.next = &tail;
         }
@@ -75,7 +75,7 @@ template<typename T> class CoarseList {
         /**
          * The destructor for the FineList. It clears all dynamically allocated memory.
          */
-        ~CoarseList(){
+        ~FineList(){
             Node* curr;
             Node* temp;
 
@@ -92,12 +92,11 @@ template<typename T> class CoarseList {
                     delete curr;
                 }
 
-
                 lock.unlock();
             }
             catch (...) {
                 lock.unlock();
-                cout << "Something went wrong during destruction of CoarseList object \n";
+                cout << "Something went wrong during destruction of FineList object.\n";
             }
         }
 
@@ -246,7 +245,7 @@ template<typename T> class CoarseList {
 
 int main()
 {
-    CoarseList<int> list;
+    FineList<int> list;
     list.add(1);
     bool a = list.contains(1);
     cout << a << "\n";
