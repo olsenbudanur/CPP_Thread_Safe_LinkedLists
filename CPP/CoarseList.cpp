@@ -68,12 +68,12 @@ template<typename T> class CoarseList {
          * The constructor for the CoarseList. It initiates the head and tail.
          */
         CoarseList() : head(0), tail(std::numeric_limits<std::size_t>::max()){
-            cout << "Constructor is called \n";
             head.next = &tail;
         }
 
         /**
          * The destructor for the FineList. It clears all dynamically allocated memory.
+         * What happens if this is called while other threads are doing work?
          */
         ~CoarseList(){
             Node* curr;
@@ -84,14 +84,13 @@ template<typename T> class CoarseList {
             lock.lock();
 
             try{
-                curr = &head;
+                curr = head.next;
 
-                while (curr != nullptr){
+                while (curr != &tail){
                     temp = curr;
                     curr = curr->next;
-                    delete curr;
+                    delete temp;
                 }
-
 
                 lock.unlock();
             }
@@ -110,9 +109,9 @@ template<typename T> class CoarseList {
             //
             // Get the hash of the item we are trying to insert.
             size_t key = hasher(item);
-            Node* curr;
             Node* prev;
-
+            Node* curr;
+            
             //
             // Acquire the only lock. No one can do anything now..
             lock.lock();
@@ -159,8 +158,9 @@ template<typename T> class CoarseList {
             //
             // Get the hash of the item we are trying to insert.
             size_t key = hasher(item);
-            Node* curr;
             Node* prev;
+            Node* curr;
+            
 
             //
             // Acquire the only lock. No one can do anything now..
@@ -192,7 +192,7 @@ template<typename T> class CoarseList {
                 
             } catch (...) {
                 lock.unlock();
-                cout << "Something went wrong during contains(). \n";
+                cout << "Something went wrong during remove(). \n";
                 return false;
             }
         }
@@ -204,10 +204,11 @@ template<typename T> class CoarseList {
          */
         bool contains(T item) {
             //
-            // Get the hash of the item we are trying to insert.
+            // Get the hash of the item we are trying to find.
             size_t key = hasher(item);
-            Node* curr;
             Node* prev;
+            Node* curr;
+            
 
             //
             // Acquire the only lock. No one can do anything now..
@@ -246,11 +247,16 @@ template<typename T> class CoarseList {
 
 int main()
 {
-    CoarseList<int> list;
-    list.add(1);
-    bool a = list.contains(1);
+    CoarseList<int>* list = new CoarseList<int>;
+    list->add(1);
+    bool a = list->contains(1);
     cout << a << "\n";
-    bool remove = list.remove(1);
+    bool remove = list->remove(1);
     cout << remove << "\n";
+    a = list->contains(1);
+    cout << a << "\n";
+
+    delete list;
+
     return 0;
 }

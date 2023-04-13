@@ -7,6 +7,7 @@
 //
 // Used for locks
 #include <mutex>
+#include <atomic>
 
 using namespace std;
 
@@ -25,12 +26,17 @@ template<typename T> class FineList {
                 T item; 
 
                 //
-                // Hash of the item.
+                // Hash of the item
                 size_t key;
 
                 //
-                // Next node in the chain.
+                // Next node in the chain
                 Node *next;
+
+                //
+                // Lock for a node.
+                std::mutex mutex;
+                std::atomic<bool> isLocked{false};
 
                 /**
                  * Regular Node constructor 
@@ -48,16 +54,29 @@ template<typename T> class FineList {
                     this->key = key;
                     this->next = nullptr;
                 }
+
+                /**
+                 * Lock the node
+                 */
+                void lock(){
+                    mutex.lock();
+                    isLocked.store(true);
+                }
+
+                /**
+                 * Unlock the node if locked.
+                 */
+                void unlock(){
+                    if (isLocked.exchange(false)) {
+                        mutex.unlock();
+                    }
+                }
         };
 
         //
         // The head and tail of the singly linked list implementation of FineList.
         Node head;
         Node tail;
-
-        //
-        // Lock for the implementation.
-        std::mutex lock;
 
         //
         // The std hashing object, so we don't need to initate it multiple times.
@@ -67,36 +86,29 @@ template<typename T> class FineList {
         /**
          * The constructor for the FineList. It initiates the head and tail.
          */
-        FineList() : head(0), tail(std::numeric_limits<std::size_t>::max()){
-            cout << "Constructor is called \n";
+        FineList() : head(std::numeric_limits<std::size_t>::min()), tail(std::numeric_limits<std::size_t>::max()){
             head.next = &tail;
         }
 
         /**
          * The destructor for the FineList. It clears all dynamically allocated memory.
+         * What happens if this is called while other threads are doing work?
          */
         ~FineList(){
             Node* curr;
             Node* temp;
-
-            //
-            // Acquire the only lock. No one can do anything now..
-            lock.lock();
-
+            
             try{
-                curr = &head;
-
-                while (curr != nullptr){
+                curr = head.next;
+                while (curr != &tail){
+                    curr->lock();
                     temp = curr;
                     curr = curr->next;
-                    delete curr;
+                    delete temp;
                 }
-
-                lock.unlock();
             }
             catch (...) {
-                lock.unlock();
-                cout << "Something went wrong during destruction of FineList object.\n";
+                cout << "Something went wrong during destruction of CoarseList object...\n";
             }
         }
 
@@ -108,27 +120,33 @@ template<typename T> class FineList {
         bool add(T item) {
             //
             // Get the hash of the item we are trying to insert.
-            size_t key = hasher(item);
-            Node* curr;
-            Node* prev;
-
+            size_t key = hasher(item) + 1;
             //
-            // Acquire the only lock. No one can do anything now..
-            lock.lock();
+            // Lock the head, and set it as prev.
+            Node* prev;
+            Node* curr;
+
+            head.lock();
+            prev = &head;
+
             try {
                 //
                 // Find the spot we need to add this item to.
-                prev = &head;
                 curr = prev->next;
+                curr->lock();
+
                 while (curr->key < key){
+                    prev->unlock();
                     prev = curr;
                     curr = curr->next;
+                    curr->lock();
                 }
 
                 //
                 // If the item already exists in the list, return false.
                 if (key == curr->key){
-                    lock.unlock();
+                    prev->unlock();
+                    curr->unlock();
                     return false;
                 }
                 
@@ -139,12 +157,16 @@ template<typename T> class FineList {
                 newNode->next = curr;
                 prev->next = newNode;
 
-                lock.unlock();
+                prev->unlock();
+                curr->unlock();
                 return true;
                 
             } catch (...) {
-                lock.unlock();
+                prev->unlock();
+                curr->unlock();
+                
                 cout << "Something went wrong during add(). \n";
+                
                 return false;
             }
         }
@@ -157,41 +179,54 @@ template<typename T> class FineList {
         bool remove(T item) {
             //
             // Get the hash of the item we are trying to insert.
-            size_t key = hasher(item);
-            Node* curr;
-            Node* prev;
+            size_t key = hasher(item) + 1;
 
             //
-            // Acquire the only lock. No one can do anything now..
-            lock.lock();
+            // Lock the head, and set it as prev.
+            Node* prev;
+            Node* curr;
+
+            head.lock();
+            prev = &head;
+
             try {
                 //
-                // Find the spot we need to add this item to.
-                prev = &head;
+                // Find the spot we need to remove the item from
                 curr = prev->next;
+                curr->lock();
+
                 while (curr->key < key){
+                    prev->unlock();
                     prev = curr;
                     curr = curr->next;
+                    curr->lock();
                 }
 
                 //
                 // If the item does not exist in the list, return false.
                 if (key != curr->key){
-                    lock.unlock();
+                    prev->unlock();
+                    curr->unlock();
                     return false;
                 }
-
+                
                 //
                 // Remove the node
                 prev->next = curr->next;
-                delete curr;
 
-                lock.unlock();
+                delete curr;
+                //
+                // What happens if the a thread crashes right here???
+                curr = nullptr;
+
+                prev->unlock();
                 return true;
                 
             } catch (...) {
-                lock.unlock();
-                cout << "Something went wrong during contains(). \n";
+                prev->unlock();
+                if (curr != nullptr) curr->unlock();
+
+                cout << "Something went wrong during remove(). \n";
                 return false;
             }
         }
@@ -203,38 +238,49 @@ template<typename T> class FineList {
          */
         bool contains(T item) {
             //
-            // Get the hash of the item we are trying to insert.
-            size_t key = hasher(item);
-            Node* curr;
-            Node* prev;
+            // Get the hash of the item we are trying to find.
+            size_t key = hasher(item) + 1;
 
             //
-            // Acquire the only lock. No one can do anything now..
-            lock.lock();
+            // Lock the head, and set it as prev.
+            Node* prev;
+            Node* curr;
+
+            head.lock();
+            prev = &head;
+
             try {
                 //
                 // Find the spot we need to add this item to.
-                prev = &head;
                 curr = prev->next;
+                curr->lock();
+
                 while (curr->key < key){
+                    prev->unlock();
                     prev = curr;
                     curr = curr->next;
+                    curr->lock();
                 }
 
                 //
-                // If the item  exists in the list, return true.
+                // If the item already exists in the list, return false.
                 if (key == curr->key){
-                    lock.unlock();
+                    prev->unlock();
+                    curr->unlock();
                     return true;
                 }
                 else {
-                    lock.unlock();
+                    prev->unlock();
+                    curr->unlock();
                     return false;
                 }
-
+                
             } catch (...) {
-                lock.unlock();
-                cout << "Something went wrong during contains(). \n";
+                prev->unlock();
+                curr->unlock();
+                
+                cout << "Something went wrong during contain(). \n";
+                
                 return false;
             }
         }
@@ -245,11 +291,16 @@ template<typename T> class FineList {
 
 int main()
 {
-    FineList<int> list;
-    list.add(1);
-    bool a = list.contains(1);
+    FineList<int>* list = new FineList<int>;
+    list->add(1);
+    bool a = list->contains(1);
     cout << a << "\n";
-    bool remove = list.remove(1);
+    bool remove = list->remove(1);
     cout << remove << "\n";
+    a = list->contains(1);
+    cout << a << "\n";
+
+    delete list;
+
     return 0;
 }
