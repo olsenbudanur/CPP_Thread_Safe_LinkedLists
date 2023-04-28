@@ -1,3 +1,7 @@
+#ifndef OPTIMISTIC_LIST_HPP
+#define OPTIMISTIC_LIST_HPP
+
+
 //
 // Used for hashing
 #include <functional>
@@ -17,7 +21,7 @@ using namespace std;
 /**
  * Generic template for a Linked List.
  */
-template<typename T> class LockFreeList {
+template<typename T> class OptimisticList {
     private: 
         /**
          * Inner nested node class.
@@ -35,21 +39,12 @@ template<typename T> class LockFreeList {
                 //
                 // Next node in the chain
                 // Node *next;
-                // #TODO Try to use the atomic pointer.
-                //
-                // HazartPointer (?)
                 std::shared_ptr<Node> next;
 
                 //
                 // Lock for a node.
                 std::mutex mutex;
                 std::atomic<bool> isLocked{false};
-
-                //
-                // Is this node logically removed? Not sure
-                // if this variable has to be atomic... 
-                // #TODO ask Dr. Mendes.
-                std::atomic<bool> isMarked{false};
 
                 /**
                  * Regular Node constructor 
@@ -86,28 +81,8 @@ template<typename T> class LockFreeList {
                 }
         };
 
-        /**
-         * Inner nested Window class.
-         */
-        class Window {
-            public:
-                //
-                // The nodes of the window.
-                Node* pred;
-                Node* curr;
-
-                /**
-                 * Window constructor 
-                 */
-                Window(Node* pred, Node* curr) {
-                    this->curr = curr;
-                    this->pred = pred;
-                }
-
-        }
-
         //
-        // The head and tail of the singly linked list implementation of LockFreeList.
+        // The head and tail of the singly linked list implementation of OptimisticList.
         // Node head;
         std::shared_ptr<Node> head = std::make_shared<Node>(0);
 
@@ -117,27 +92,21 @@ template<typename T> class LockFreeList {
 
     public: 
         /**
-         * The constructor for the LockFreeList. It initiates the head and tail.
+         * The constructor for the OptimisticList. It initiates the head and tail.
          */
-        LockFreeList() {
+        OptimisticList() {
             std::shared_ptr<Node> tail = std::make_shared<Node>(std::numeric_limits<std::size_t>::max());
             head->next = tail;
         }
 
         /**
-         * The destructor for the LockFreeList. It clears all dynamically allocated memory.
+         * The destructor for the OptimisticList. It clears all dynamically allocated memory.
          * What happens if this is called while other threads are doing work?
          */
-        ~LockFreeList(){
+        ~OptimisticList(){
             //
             // This should be enough in theory, since head is the only saved reference.
             head.reset();
-        }
-
-
-        Window find(size_t key){
-            std::shared_ptr<Node> prev;
-            std::shared_ptr<Node> curr;
         }
 
         /**
@@ -147,7 +116,14 @@ template<typename T> class LockFreeList {
          * @return whther predecessor and current have changed
          */
         bool validate(std::shared_ptr<Node> prev, std::shared_ptr<Node> curr){
-            return !std::atomic_load(&prev->isMarked) && !std::atomic_load(&curr->isMarked) && prev->next == curr;
+            std::shared_ptr<Node> node = head;
+            while (node != nullptr && node->key <= prev->key){
+                if (node->key == prev->key){
+                    return prev->next == curr;
+                }
+                node = node->next;
+            }
+            return false;
         }
 
         /**
@@ -273,8 +249,6 @@ template<typename T> class LockFreeList {
                         // Remove the node, the smart pointer should dereference it in theory.
                         prev->next = curr->next;
 
-                        curr->isMarked.store(true); 
-
                         curr->unlock();
                         prev->unlock();
                         return true;
@@ -308,15 +282,54 @@ template<typename T> class LockFreeList {
             size_t key = hasher(item);
 
             //
-            // Try to find the item...
-            std::shared_ptr<Node> curr = head;
-            while (curr->key < key){
-                curr = curr->next;
-            }
-            
+            // Lock the head, and set it as prev.
+            std::shared_ptr<Node> prev;
+            std::shared_ptr<Node> curr;
+
+            prev = head;
+
             //
-            // If we find it, and it is not marked for deletion.
-            return !std::atomic_load(&curr->isMarked) && key == curr->key;
+            // Until validation is true (optimistically, this loop will only execute once)
+            while (true){
+                //
+                // Find the insertion spot without locking.
+                curr = prev->next;
+                while (curr->key < key){
+                    prev = curr;
+                    curr = curr->next;
+                }
+
+                prev->lock();
+                curr->lock();
+
+                try{
+                    if (validate(prev, curr)){
+                        //
+                        // If the item exists in the list, return true.
+                        if (key == curr->key){
+                            prev->unlock();
+                            curr->unlock();
+                            return true;
+                        }
+                        else {
+                            prev->unlock();
+                            curr->unlock();
+                            return false;
+                        }
+                    }
+                    else {
+                        //
+                        // If validation did not work, we start over again.
+                        continue;
+                    }
+                }
+                catch (...) {
+                    cout << "Something went wrong during contains(). \n";
+                    prev->unlock();
+                    curr->unlock();
+                    prev = head;
+                }
+            }
         }
 };
 
@@ -325,7 +338,7 @@ template<typename T> class LockFreeList {
 
 int main()
 {
-    LockFreeList<int>* list = new LockFreeList<int>;
+    OptimisticList<int>* list = new OptimisticList<int>;
     list->add(1);
     bool a = list->contains(1);
     cout << a << "\n";
@@ -338,3 +351,6 @@ int main()
 
     return 0;
 }
+
+
+#endif 
